@@ -57,7 +57,7 @@ function markdownFields() {
 
 function imageFields() {
     return {
-        photoURL: { type: 'string', description: '(for msgtype=image) Image URL or mediaId (use upload_dingtalk_media to get mediaId)' },
+        photoURL: { type: 'string', description: '(for msgtype=image) Image URL or mediaId (use upload_media to get mediaId)' },
     };
 }
 
@@ -98,7 +98,7 @@ function actionCardFields() {
 
 function fileFields() {
     return {
-        mediaId: { type: 'string', description: '(for msgtype=file) mediaId from upload_dingtalk_media' },
+        mediaId: { type: 'string', description: '(for msgtype=file) mediaId from upload_media' },
         fileName: { type: 'string', description: '(for msgtype=file) File display name, e.g. "report.pdf"' },
         fileType: { type: 'string', description: '(for msgtype=file) File extension: xlsx, pdf, zip, rar, doc, docx' },
     };
@@ -106,15 +106,15 @@ function fileFields() {
 
 function audioFields() {
     return {
-        mediaId: { type: 'string', description: '(for msgtype=audio) mediaId from upload_dingtalk_media' },
+        mediaId: { type: 'string', description: '(for msgtype=audio) mediaId from upload_media' },
         duration: { type: 'number', description: '(for msgtype=audio) Duration in milliseconds' },
     };
 }
 
 function videoFields() {
     return {
-        videoMediaId: { type: 'string', description: '(for msgtype=video) Video mediaId from upload_dingtalk_media' },
-        picMediaId: { type: 'string', description: '(for msgtype=video) Cover image mediaId from upload_dingtalk_media' },
+        videoMediaId: { type: 'string', description: '(for msgtype=video) Video mediaId from upload_media' },
+        picMediaId: { type: 'string', description: '(for msgtype=video) Cover image mediaId from upload_media' },
         duration: { type: 'number', description: '(for msgtype=video) Duration in seconds' },
         videoType: { type: 'string', description: '(for msgtype=video) Video format, default "mp4"' },
         width: { type: 'number', description: '(for msgtype=video) Display width in px, default 600' },
@@ -279,24 +279,24 @@ class DingTalkMCPServer {
         this.server.setRequestHandler(ListToolsRequestSchema, async () => {
             const tools = [
                 {
-                    name: 'send_dingtalk_single_message',
+                    name: 'send_single_message',
                     description:
                         'Send a message to one or more DingTalk users (up to 20). ' +
                         'Supports text, markdown, image, link, actionCard (single/multi button), file, audio, video. ' +
                         'Recipients can be specified by userId, userIds[], or userName (exact match). ' +
-                        'Use upload_dingtalk_media first for image/file/audio/video to get a mediaId.',
+                        'Use upload_media first for image/file/audio/video to get a mediaId.',
                     inputSchema: buildSingleMessageSchema(),
                 },
                 {
-                    name: 'send_dingtalk_group_message',
+                    name: 'send_group_message',
                     description:
                         'Send a message to a DingTalk group chat. ' +
                         'Supports text, markdown, image, link, actionCard (single/multi button), file, audio, video. ' +
-                        'Use upload_dingtalk_media first for image/file/audio/video to get a mediaId.',
+                        'Use upload_media first for image/file/audio/video to get a mediaId.',
                     inputSchema: buildGroupMessageSchema(),
                 },
                 {
-                    name: 'upload_dingtalk_media',
+                    name: 'upload_media',
                     description:
                         'Upload a local media file to DingTalk and get a mediaId. ' +
                         'Required before sending image, file, audio, or video messages. ' +
@@ -331,22 +331,22 @@ class DingTalkMCPServer {
             }
             const { name, arguments: args } = request.params;
             try {
-                // --- upload_dingtalk_media ---
-                if (name === 'upload_dingtalk_media') {
+                // --- upload_media ---
+                if (name === 'upload_media') {
                     const { filePath, mediaType } = args;
                     const result = await this.dingtalkClient.uploadMedia(filePath, mediaType);
                     return {
                         content: [
                             {
                                 type: 'text',
-                                text: `File uploaded successfully.\nmediaId: ${result.mediaId}\ntype: ${result.type}\ncreatedAt: ${new Date(result.createdAt).toISOString()}\n\nUse this mediaId in send_dingtalk_single_message or send_dingtalk_group_message.`,
+                                text: `File uploaded successfully.\nmediaId: ${result.mediaId}\ntype: ${result.type}\ncreatedAt: ${new Date(result.createdAt).toISOString()}\n\nUse this mediaId in send_single_message or send_group_message.`,
                             },
                         ],
                     };
                 }
 
-                // --- send_dingtalk_single_message ---
-                if (name === 'send_dingtalk_single_message') {
+                // --- send_single_message ---
+                if (name === 'send_single_message') {
                     const msgtype = args.msgtype || 'text';
                     validateMsgParams(msgtype, args);
 
@@ -368,8 +368,8 @@ class DingTalkMCPServer {
                     };
                 }
 
-                // --- send_dingtalk_group_message ---
-                if (name === 'send_dingtalk_group_message') {
+                // --- send_group_message ---
+                if (name === 'send_group_message') {
                     const { chatId } = args;
                     const msgtype = args.msgtype || 'text';
                     validateMsgParams(msgtype, args);
