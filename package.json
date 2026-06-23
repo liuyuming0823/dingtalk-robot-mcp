@@ -1,0 +1,60 @@
+{
+  "name": "dingtalk-mcp-server",
+  "version": "1.1.0",
+  "description": "钉钉机器人 MCP 服务器。支持通过 userId、姓名（自动查找）或批量（最多20人）发送钉钉单聊和群聊消息。",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "dingtalk-mcp-server": "./dist/index.js",
+    "dingtalk-mcp-server-config": "./dist/config-setup.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "prepare": "npm run build",
+    "watch": "tsc --watch",
+    "config": "node dist/config-setup.js",
+    "install-post": "echo Installation complete. Run dingtalk-mcp-server-config to configure."
+  },
+  "keywords": [
+    "mcp",
+    "dingtalk",
+    "robot",
+    "chat",
+    "message",
+    "batch-send",
+    "user-search",
+    "ai",
+    "llm",
+    "workbuddy"
+  ],
+  "author": "刘玉明 (https://github.com/liuyuming0823)",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/liuyuming0823/dingtalk-robot-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/liuyuming0823/dingtalk-robot-mcp/issues"
+  },
+  "homepage": "https://github.com/liuyuming0823/dingtalk-robot-mcp#readme",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "axios": "^1.7.9",
+    "inquirer": "^9.3.8"
+  },
+  "devDependencies": {
+    "@types/inquirer": "^9.0.10",
+    "@types/node": "^22.10.6",
+    "typescript": "^5.7.3"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "INSTALL.md",
+    "mcp-config-example.json",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

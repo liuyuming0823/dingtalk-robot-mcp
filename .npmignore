@@ -1,0 +1,17 @@
+# Ignore files for npm package
+node_modules/
+dist/
+*.log
+*.tgz
+.DS_Store
+*.md
+!README.md
+!INSTALL.md
+src/
+tsconfig.json
+.git/
+.gitignore
+*.ts
+*.bak
+.vscode/
+.idea/

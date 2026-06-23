@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "dingtalk": {
+      "command": "node",
+      "args": [
+        "/path/to/dingtalk-mcp-server/dist/index.js"
+      ],
+      "env": {
+        "DINGTALK_APP_KEY": "你的AppKey",
+        "DINGTALK_APP_SECRET": "你的AppSecret"
+      }
+    }
+  }
+}
