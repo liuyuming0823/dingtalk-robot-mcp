@@ -268,7 +268,7 @@ class DingTalkMCPServer {
 
     constructor() {
         this.server = new Server(
-            { name: 'dingtalk-mcp-server', version: '1.2.0' },
+            { name: '钉钉机器人', version: '1.2.1' },
             { capabilities: { tools: {} } }
         );
         this.setupHandlers();
