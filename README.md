@@ -1,6 +1,6 @@
 # 钉钉机器人 MCP
 
-钉钉机器人 MCP 服务器。通过 MCP 协议实现 AI 助手发送钉钉单聊和群聊消息，支持通过 **userId**、**姓名** 或 **批量 userId** 发送，最多单次 20 人。
+钉钉机器人 MCP 服务器。通过 MCP 协议实现 AI 助手发送钉钉单聊和群聊消息，支持 **文本、Markdown、图片、链接、ActionCard、文件、语音、视频** 共 8 种消息类型，可通过 **userId**、**姓名** 或 **批量 userId** 发送，最多单次 20 人。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 
@@ -10,8 +10,10 @@
 
 | 功能 | 说明 |
 |---|---|
-| 单聊消息 | 发送文本消息给指定用户 |
-| 群聊消息 | 发送文本消息到指定群 |
+| 多消息类型 | 文本、Markdown、图片、链接、ActionCard、文件、语音、视频 |
+| 单聊消息 | 发送多种类型消息给指定用户 |
+| 群聊消息 | 发送多种类型消息到指定群 |
+| 媒体上传 | 上传本地文件获取 mediaId，用于图片/文件/语音/视频消息 |
 | 按 userId 发送 | 直接指定钉钉用户 ID（兼容旧用法） |
 | 按姓名发送 | 输入中文姓名，自动查找 userId 并发送 |
 | 批量发送 | 一次发送给最多 20 个用户 |
@@ -111,28 +113,59 @@ dingtalk-mcp-server-config
 
 | 工具名 | 功能 |
 |---|---|
-| `send_dingtalk_single_message` | 发送单聊消息（支持 userId/userName/批量） |
-| `send_dingtalk_group_message` | 发送群聊消息 |
+| `send_dingtalk_single_message` | 发送单聊消息（支持 8 种消息类型） |
+| `send_dingtalk_group_message` | 发送群聊消息（支持 8 种消息类型） |
+| `upload_dingtalk_media` | 上传媒体文件，获取 mediaId |
 
 ### 单聊消息参数
 
 | 参数 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `content` | string | ✅ | 消息文本内容 |
+| `msgtype` | string | 否（默认 text） | 消息类型：text / markdown / image / link / actionCard_single / actionCard_multi / file / audio / video |
 | `userId` | string | 三选一 | 单个用户 ID |
 | `userIds` | string[] | 三选一 | 多个用户 ID（最多 20 个） |
 | `userName` | string | 三选一 | 用户中文姓名（精确匹配） |
+
+**各消息类型额外参数：**
+
+| msgtype | 额外必填参数 | 可选参数 |
+|---|---|---|
+| text | `content` (文本内容) | — |
+| markdown | `title` (标题), `text` (Markdown正文) | — |
+| image | `photoURL` (图片URL或mediaId) | — |
+| link | `title`, `text`, `messageUrl` | `picUrl` (预览图) |
+| actionCard_single | `title`, `text`, `singleTitle`, `singleURL` | `btnOrientation` (0竖/1横) |
+| actionCard_multi | `title`, `text`, `btns[]` (按钮数组, 1-6个) | `btnOrientation` |
+| file | `mediaId`, `fileName`, `fileType` | — |
+| audio | `mediaId`, `duration` (毫秒) | — |
+| video | `videoMediaId`, `picMediaId`, `duration` (秒) | `videoType`, `width`, `height` |
 
 ### 群聊消息参数
 
 | 参数 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `chatId` | string | ✅ | 群聊 openConversationId |
-| `content` | string | ✅ | 消息文本内容 |
+| `msgtype` | string | 否（默认 text） | 消息类型（同单聊） |
+
+其余参数与单聊消息各类型一致。
+
+### 上传媒体文件参数
+
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `filePath` | string | ✅ | 本地文件绝对路径 |
+| `mediaType` | string | ✅ | image / voice / video / file |
+
+| mediaType | 支持格式 | 大小限制 |
+|---|---|---|
+| image | jpg, png, gif, bmp | 20MB |
+| voice | amr, mp3, wav | 2MB |
+| video | mp4 | 20MB |
+| file | doc, docx, xls, xlsx, ppt, pptx, zip, pdf, rar | 20MB |
 
 ### 使用示例
 
-**示例 1：按 userId 发送**
+**示例 1：发送文本（向后兼容）**
 ```
 给张三发消息，userId: "204457105626433998"，内容：明天的会议改到下午3点
 ```
@@ -142,16 +175,26 @@ dingtalk-mcp-server-config
 通过钉钉给朱育敏发消息，内容是：请查收本周的测试报告
 ```
 
-**示例 3：批量发送**
+**示例 3：发送 Markdown**
+```
+通过钉钉给 userId "011950195121139389" 发 markdown 消息，标题：周报提醒，text：**请于周五前提交周报**\n\n- 本周工作总结\n- 下周计划
+```
+
+**示例 4：上传并发送图片**
+```
+先把 D:\screenshot.png 上传到钉钉（mediaType: image），拿到 mediaId 后通过钉钉发给朱育敏，msgtype 用 image
+```
+
+**示例 5：发送 ActionCard**
+```
+给 userId "011950195121139389" 发 actionCard，msgtype: actionCard_single，title：新版本发布，text：## v2.0 已上线\n\n新增多消息类型支持，singleTitle：查看详情，singleURL：https://github.com
+```
+
+**示例 6：批量发送**
 ```
 通过钉钉给以下用户发消息：
 userIds: ["204457105626433998", "481029384729103847"]
-内容：全员通知：明天下午3点系统升级维护
-```
-
-**示例 4：群聊消息**
-```
-发送钉钉群消息，chatId: "cidXXXXXXXXX"，内容：本周会议纪要已更新
+msgtype: text, content：全员通知：明天下午3点系统升级维护
 ```
 
 ---
@@ -233,6 +276,7 @@ userIds: ["204457105626433998", "481029384729103847"]
 | 获取 Token | `POST /v1.0/oauth2/accessToken` |
 | 单聊消息 | `POST /v1.0/robot/oToMessages/batchSend` |
 | 群聊消息 | `POST /v1.0/robot/groupMessages/send` |
+| 上传媒体 | `POST /oapi.dingtalk.com/media/upload` |
 | 部门列表 | `GET /oapi.dingtalk.com/department/list` |
 | 部门成员 | `GET /oapi.dingtalk.com/user/simplelist` |
 

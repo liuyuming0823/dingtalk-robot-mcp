@@ -1,6 +1,6 @@
 {
   "name": "dingtalk-mcp-server",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "钉钉机器人 MCP 服务器。支持通过 userId、姓名（自动查找）或批量（最多20人）发送钉钉单聊和群聊消息。",
   "type": "module",
   "main": "dist/index.js",
