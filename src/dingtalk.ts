@@ -124,8 +124,15 @@ export function buildMsgParam(msgtype: string, params: MsgParams): string {
 
 export class DingTalkClient {
   private config: DingTalkConfig;
-  private accessToken: string | null = null;
-  private tokenExpiry: number = 0;
+
+  // 新 API（api.dingtalk.com）token → 用于机器人消息发送
+  private newApiToken: string | null = null;
+  private newApiTokenExpiry: number = 0;
+
+  // 旧 API（oapi.dingtalk.com）token → 用于通讯录查询、媒体上传
+  private oldApiToken: string | null = null;
+  private oldApiTokenExpiry: number = 0;
+
   private userCache: Map<string, Set<string>> | null = null;
   private cacheTime: number = 0;
   private readonly CACHE_TTL = 5 * 60 * 1000;
@@ -134,39 +141,46 @@ export class DingTalkClient {
     this.config = config;
   }
 
-  async getAccessToken(): Promise<string> {
+  /** 获取新 API token（api.dingtalk.com/v1.0/oauth2/accessToken） */
+  private async getNewApiToken(): Promise<string> {
     const now = Date.now();
-    if (this.accessToken && now < this.tokenExpiry) {
-      return this.accessToken;
+    if (this.newApiToken && now < this.newApiTokenExpiry) {
+      return this.newApiToken;
     }
-    try {
-      const response = await axios.post(
-        'https://api.dingtalk.com/v1.0/oauth2/accessToken',
-        { appKey: this.config.appKey, appSecret: this.config.appSecret }
-      );
-      this.accessToken = response.data.accessToken;
-      this.tokenExpiry = now + (response.data.expireIn - 300) * 1000;
-      return this.accessToken;
-    } catch {
-      const oldResponse = await axios.get('https://oapi.dingtalk.com/gettoken', {
-        params: { appkey: this.config.appKey, appsecret: this.config.appSecret },
-      });
-      if (oldResponse.data.errcode !== 0) {
-        throw new Error(`Failed to get access token: ${oldResponse.data.errmsg}`);
-      }
-      this.accessToken = oldResponse.data.access_token;
-      this.tokenExpiry = now + (oldResponse.data.expires_in - 300) * 1000;
-      return this.accessToken;
-    }
+    const response = await axios.post(
+      'https://api.dingtalk.com/v1.0/oauth2/accessToken',
+      { appKey: this.config.appKey, appSecret: this.config.appSecret }
+    );
+    this.newApiToken = response.data.accessToken as string;
+    this.newApiTokenExpiry = now + (response.data.expireIn - 300) * 1000;
+    return this.newApiToken;
   }
 
-  async buildUserCache(): Promise<Map<string, Set<string>>> {
+  /** 获取旧 API token（oapi.dingtalk.com/gettoken） */
+  private async getOldApiToken(): Promise<string> {
     const now = Date.now();
-    if (this.userCache && now < this.cacheTime + this.CACHE_TTL) {
-      return this.userCache;
+    if (this.oldApiToken && now < this.oldApiTokenExpiry) {
+      return this.oldApiToken;
     }
+    const response = await axios.get('https://oapi.dingtalk.com/gettoken', {
+      params: { appkey: this.config.appKey, appsecret: this.config.appSecret },
+    });
+    if (response.data.errcode !== 0) {
+      throw new Error(`Failed to get old API token: ${response.data.errmsg}`);
+    }
+    this.oldApiToken = response.data.access_token as string;
+    this.oldApiTokenExpiry = now + (response.data.expires_in - 300) * 1000;
+    return this.oldApiToken;
+  }
 
-    const token = await this.getAccessToken();
+  /**
+   * 使用旧 API（oapi.dingtalk.com）构建用户缓存。
+   * 这是官方文档明确支持的接口，新 API 暂无对应的通讯录查询接口。
+   */
+  private async buildUserCacheFromOldApi(): Promise<Map<string, Set<string>>> {
+    const token = await this.getOldApiToken();
+
+    // 获取所有部门
     const deptRes = await axios.get('https://oapi.dingtalk.com/department/list', {
       params: { access_token: token },
     });
@@ -177,9 +191,9 @@ export class DingTalkClient {
     const allDepts: { id: number; name: string }[] = deptRes.data.department;
     const nameMap = new Map<string, Set<string>>();
 
-    const CONCURRENCY = 10;
-    for (let i = 0; i < allDepts.length; i += CONCURRENCY) {
-      const batch = allDepts.slice(i, i + CONCURRENCY);
+    // 并发获取每个部门的用户列表（每批10个部门）
+    for (let i = 0; i < allDepts.length; i += 10) {
+      const batch = allDepts.slice(i, i + 10);
       const results = await Promise.allSettled(
         batch.map(dept =>
           axios.get('https://oapi.dingtalk.com/user/simplelist', {
@@ -190,16 +204,23 @@ export class DingTalkClient {
       for (const r of results) {
         if (r.status === 'fulfilled' && r.value.data.errcode === 0 && r.value.data.userlist) {
           for (const u of r.value.data.userlist) {
-            if (!nameMap.has(u.name)) {
-              nameMap.set(u.name, new Set());
-            }
+            if (!nameMap.has(u.name)) nameMap.set(u.name, new Set());
             nameMap.get(u.name)!.add(u.userid);
           }
         }
       }
     }
 
-    this.userCache = nameMap;
+    return nameMap;
+  }
+
+  async buildUserCache(): Promise<Map<string, Set<string>>> {
+    const now = Date.now();
+    if (this.userCache && now < this.cacheTime + this.CACHE_TTL) {
+      return this.userCache;
+    }
+
+    this.userCache = await this.buildUserCacheFromOldApi();
     this.cacheTime = now;
     return this.userCache;
   }
@@ -216,7 +237,7 @@ export class DingTalkClient {
     msgtype: string,
     msgParams: MsgParams
   ): Promise<BatchSendResponse> {
-    const accessToken = await this.getAccessToken();
+    const accessToken = await this.getNewApiToken();
     const msgKey = resolveMsgKey(msgtype, msgParams.btns?.length);
     const msgParam = buildMsgParam(msgtype, msgParams);
     try {
@@ -244,7 +265,7 @@ export class DingTalkClient {
     msgtype: string,
     msgParams: MsgParams
   ): Promise<Record<string, any>> {
-    const accessToken = await this.getAccessToken();
+    const accessToken = await this.getNewApiToken();
     const msgKey = resolveMsgKey(msgtype, msgParams.btns?.length);
     const msgParam = buildMsgParam(msgtype, msgParams);
     try {
@@ -302,7 +323,9 @@ export class DingTalkClient {
       );
     }
 
-    const accessToken = await this.getAccessToken();
+    // 媒体上传使用旧 API（oapi.dingtalk.com/media/upload）
+    // 这是钉钉官方文档指定的接口，新 API 暂无对应接口
+    const accessToken = await this.getOldApiToken();
 
     const formData = new FormData();
     const fileBuffer = await fs.promises.readFile(filePath);

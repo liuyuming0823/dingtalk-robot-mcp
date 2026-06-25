@@ -1,41 +1,35 @@
 #!/usr/bin/env node
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import fs from 'fs';
-import path from 'path';
-import os from 'os';
+import { CallToolRequestSchema, ListToolsRequestSchema, } from '@modelcontextprotocol/sdk/types.js';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
 import { DingTalkClient } from './dingtalk.js';
-
 const VALID_MSGTYPES = [
     'text', 'markdown', 'image', 'link',
     'actionCard_single', 'actionCard_multi',
     'file', 'audio', 'video',
 ];
-
-// --- Schema builders (DRY) ---
-
+// --- Schema helpers ---
 function recipientsSchema() {
     return {
         userIds: {
             type: 'array',
             items: { type: 'string' },
-            description:
-                'Array of DingTalk numeric user IDs. Max 20 total recipients across userIds + userName. ' +
+            description: 'Array of DingTalk numeric user IDs. Max 20 total recipients across userIds + userName. ' +
                 'For a single recipient, pass a 1-element array (e.g. ["011950195121139389"]).',
         },
         userName: {
             type: 'array',
             items: { type: 'string' },
-            description:
-                'Array of exact user names to search and resolve to user IDs. ' +
+            description: 'Array of exact user names to search and resolve to user IDs. ' +
                 'If any name matches multiple users, the entire batch will fail with a list of duplicates. ' +
                 'Max 20 total recipients across userIds + userName.',
         },
     };
 }
-
-function msgtypeSchema(includeTextDefaults) {
+function msgtypeSchema(withTextContent) {
     const base = {
         msgtype: {
             type: 'string',
@@ -43,138 +37,109 @@ function msgtypeSchema(includeTextDefaults) {
             description: `Message type. Supported: ${VALID_MSGTYPES.join(', ')}.`,
         },
     };
-    if (includeTextDefaults) {
-        base.content = {
-            type: 'string',
-            description: '(for msgtype=text) Plain text message content',
-        };
+    if (withTextContent) {
+        base.content = { type: 'string', description: '(for msgtype=text) Plain text message content' };
     }
     return base;
 }
-
-function markdownFields() {
-    return {
-        title: { type: 'string', description: '(for msgtype=markdown) Message title shown in notification preview' },
-        text: { type: 'string', description: '(for msgtype=markdown) Markdown-formatted message body' },
-    };
-}
-
-function imageFields() {
-    return {
-        photoURL: { type: 'string', description: '(for msgtype=image) Image URL or mediaId (use upload_media to get mediaId)' },
-    };
-}
-
-function linkFields() {
-    return {
-        title: { type: 'string', description: '(for msgtype=link) Link title' },
-        text: { type: 'string', description: '(for msgtype=link) Link description text' },
-        messageUrl: { type: 'string', description: '(for msgtype=link) URL to open when clicking the link' },
-        picUrl: { type: 'string', description: '(for msgtype=link) Optional preview image URL' },
-    };
-}
-
-function actionCardFields() {
-    return {
-        title: { type: 'string', description: '(for msgtype=actionCard_*) Card title' },
-        text: { type: 'string', description: '(for msgtype=actionCard_*) Card body in Markdown format' },
-        singleTitle: { type: 'string', description: '(for msgtype=actionCard_single) Button title' },
-        singleURL: { type: 'string', description: '(for msgtype=actionCard_single) Button URL' },
-        btns: {
-            type: 'array',
-            items: {
-                type: 'object',
-                properties: {
-                    title: { type: 'string', description: 'Button title' },
-                    actionURL: { type: 'string', description: 'Button URL' },
-                },
-                required: ['title', 'actionURL'],
+const markdownFields = {
+    title: { type: 'string', description: '(for msgtype=markdown) Message title shown in notification preview' },
+    text: { type: 'string', description: '(for msgtype=markdown) Markdown-formatted message body' },
+};
+const imageFields = {
+    photoURL: { type: 'string', description: '(for msgtype=image) Image URL or mediaId (use upload_media to get mediaId)' },
+};
+const linkFields = {
+    title: { type: 'string', description: '(for msgtype=link) Link title' },
+    text: { type: 'string', description: '(for msgtype=link) Link description text' },
+    messageUrl: { type: 'string', description: '(for msgtype=link) URL to open when clicking the link' },
+    picUrl: { type: 'string', description: '(for msgtype=link) Optional preview image URL' },
+};
+const actionCardFields = {
+    title: { type: 'string', description: '(for msgtype=actionCard_*) Card title' },
+    text: { type: 'string', description: '(for msgtype=actionCard_*) Card body in Markdown format' },
+    singleTitle: { type: 'string', description: '(for msgtype=actionCard_single) Button title' },
+    singleURL: { type: 'string', description: '(for msgtype=actionCard_single) Button URL' },
+    btns: {
+        type: 'array',
+        items: {
+            type: 'object',
+            properties: {
+                title: { type: 'string', description: 'Button title' },
+                actionURL: { type: 'string', description: 'Button URL' },
             },
-            description: '(for msgtype=actionCard_multi) Array of button objects, 1-6 buttons',
+            required: ['title', 'actionURL'],
         },
-        btnOrientation: {
-            type: 'string',
-            enum: ['0', '1'],
-            description: '(for msgtype=actionCard_*) Button layout: 0=vertical, 1=horizontal',
-        },
-    };
-}
-
-function fileFields() {
-    return {
-        mediaId: { type: 'string', description: '(for msgtype=file) mediaId from upload_media' },
-        fileName: { type: 'string', description: '(for msgtype=file) File display name, e.g. "report.pdf"' },
-        fileType: { type: 'string', description: '(for msgtype=file) File extension: xlsx, pdf, zip, rar, doc, docx' },
-    };
-}
-
-function audioFields() {
-    return {
-        mediaId: { type: 'string', description: '(for msgtype=audio) mediaId from upload_media' },
-        duration: { type: 'number', description: '(for msgtype=audio) Duration in milliseconds' },
-    };
-}
-
-function videoFields() {
-    return {
-        videoMediaId: { type: 'string', description: '(for msgtype=video) Video mediaId from upload_media' },
-        picMediaId: { type: 'string', description: '(for msgtype=video) Cover image mediaId from upload_media' },
-        duration: { type: 'number', description: '(for msgtype=video) Duration in seconds' },
-        videoType: { type: 'string', description: '(for msgtype=video) Video format, default "mp4"' },
-        width: { type: 'number', description: '(for msgtype=video) Display width in px, default 600' },
-        height: { type: 'number', description: '(for msgtype=video) Display height in px, default 400' },
-    };
-}
-
+        description: '(for msgtype=actionCard_multi) Array of button objects, 1-6 buttons',
+    },
+    btnOrientation: {
+        type: 'string',
+        enum: ['0', '1'],
+        description: '(for msgtype=actionCard_*) Button layout: 0=vertical, 1=horizontal',
+    },
+};
+const fileFields = {
+    mediaId: { type: 'string', description: '(for msgtype=file) mediaId from upload_media' },
+    fileName: { type: 'string', description: '(for msgtype=file) File display name, e.g. "report.pdf"' },
+    fileType: { type: 'string', description: '(for msgtype=file) File extension: xlsx, pdf, zip, rar, doc, docx' },
+};
+const audioFields = {
+    mediaId: { type: 'string', description: '(for msgtype=audio) mediaId from upload_media' },
+    duration: { type: 'number', description: '(for msgtype=audio) Duration in milliseconds' },
+};
+const videoFields = {
+    videoMediaId: { type: 'string', description: '(for msgtype=video) Video mediaId from upload_media' },
+    picMediaId: { type: 'string', description: '(for msgtype=video) Cover image mediaId from upload_media' },
+    duration: { type: 'number', description: '(for msgtype=video) Duration in seconds' },
+    videoType: { type: 'string', description: '(for msgtype=video) Video format, default "mp4"' },
+    width: { type: 'number', description: '(for msgtype=video) Display width in px, default 600' },
+    height: { type: 'number', description: '(for msgtype=video) Display height in px, default 400' },
+};
 function buildSingleMessageSchema() {
     return {
         type: 'object',
         properties: {
             ...recipientsSchema(),
             ...msgtypeSchema(true),
-            ...markdownFields(),
-            ...imageFields(),
-            ...linkFields(),
-            ...actionCardFields(),
-            ...fileFields(),
-            ...audioFields(),
-            ...videoFields(),
+            ...markdownFields,
+            ...imageFields,
+            ...linkFields,
+            ...actionCardFields,
+            ...fileFields,
+            ...audioFields,
+            ...videoFields,
         },
         required: [],
     };
 }
-
 function buildGroupMessageSchema() {
     return {
         type: 'object',
         properties: {
             chatId: { type: 'string', description: 'DingTalk group chat ID (openConversationId)' },
             ...msgtypeSchema(true),
-            ...markdownFields(),
-            ...imageFields(),
-            ...linkFields(),
-            ...actionCardFields(),
-            ...fileFields(),
-            ...audioFields(),
-            ...videoFields(),
+            ...markdownFields,
+            ...imageFields,
+            ...linkFields,
+            ...actionCardFields,
+            ...fileFields,
+            ...audioFields,
+            ...videoFields,
         },
         required: ['chatId'],
     };
 }
-
-// --- Helpers ---
-
+// --- Validation ---
 async function resolveRecipients(args, client) {
     const resolved = new Set();
-
     // Process userIds — numeric IDs, pass through directly
     if (args.userIds?.length) {
         for (const id of args.userIds) {
-            if (!id || typeof id !== 'string') continue;
+            if (!id || typeof id !== 'string')
+                continue;
             resolved.add(id);
         }
     }
-
     // Process userName — search each name via DingTalk org API
     if (args.userName?.length) {
         // Check for duplicate entries within the userName array itself
@@ -182,89 +147,99 @@ async function resolveRecipients(args, client) {
         if (nameSet.size < args.userName.length) {
             throw new Error('Duplicate names found in userName array. Please remove duplicates before sending.');
         }
-
         for (const name of args.userName) {
-            const foundUserIds = await client.searchUserByName(name);
-            if (foundUserIds.length === 0) {
-                throw new Error(
-                    `User "${name}" not found in the organization. Please check the name and try again.`
-                );
+            const found = await client.searchUserByName(name);
+            if (found.length === 0) {
+                throw new Error(`User "${name}" not found in the organization.`);
             }
-            if (foundUserIds.length > 1) {
-                throw new Error(
-                    `Multiple users found with name "${name}" (${foundUserIds.length} duplicates). ` +
-                    `Found userIds: ${foundUserIds.join(', ')}. ` +
-                    `Please replace "${name}" with the specific numeric userId in the userIds array.`
-                );
+            if (found.length > 1) {
+                throw new Error(`Multiple users found with name "${name}" (${found.length} duplicates). ` +
+                    `Found userIds: ${found.join(', ')}. Replace "${name}" with the specific numeric userId in the userIds array.`);
             }
-            resolved.add(foundUserIds[0]);
+            resolved.add(found[0]);
         }
     }
-
-    if (resolved.size === 0) return null;
+    if (resolved.size === 0)
+        return null;
     if (resolved.size > 20) {
-        throw new Error(
-            `Maximum 20 users allowed per batch, got ${resolved.size} (combined from userIds and userName).`
-        );
+        throw new Error(`Maximum 20 users allowed per batch, got ${resolved.size} (combined from userIds and userName).`);
     }
-
     return [...resolved];
 }
-
 function validateMsgParams(msgtype, args) {
     const errors = [];
     switch (msgtype) {
         case 'text':
-            if (!args.content) errors.push('content is required for msgtype=text');
+            if (!args.content)
+                errors.push('content is required for msgtype=text');
             break;
         case 'markdown':
-            if (!args.title) errors.push('title is required for msgtype=markdown');
-            if (!args.text) errors.push('text is required for msgtype=markdown');
+            if (!args.title)
+                errors.push('title is required for msgtype=markdown');
+            if (!args.text)
+                errors.push('text is required for msgtype=markdown');
             break;
         case 'image':
-            if (!args.photoURL) errors.push('photoURL is required for msgtype=image');
+            if (!args.photoURL)
+                errors.push('photoURL is required for msgtype=image');
             break;
         case 'link':
-            if (!args.title) errors.push('title is required for msgtype=link');
-            if (!args.text) errors.push('text is required for msgtype=link');
-            if (!args.messageUrl) errors.push('messageUrl is required for msgtype=link');
+            if (!args.title)
+                errors.push('title is required for msgtype=link');
+            if (!args.text)
+                errors.push('text is required for msgtype=link');
+            if (!args.messageUrl)
+                errors.push('messageUrl is required for msgtype=link');
             break;
         case 'actionCard_single':
-            if (!args.title) errors.push('title is required for msgtype=actionCard_single');
-            if (!args.text) errors.push('text is required for msgtype=actionCard_single');
-            if (!args.singleTitle) errors.push('singleTitle is required for msgtype=actionCard_single');
-            if (!args.singleURL) errors.push('singleURL is required for msgtype=actionCard_single');
+            if (!args.title)
+                errors.push('title is required');
+            if (!args.text)
+                errors.push('text is required');
+            if (!args.singleTitle)
+                errors.push('singleTitle is required');
+            if (!args.singleURL)
+                errors.push('singleURL is required');
             break;
         case 'actionCard_multi':
-            if (!args.title) errors.push('title is required for msgtype=actionCard_multi');
-            if (!args.text) errors.push('text is required for msgtype=actionCard_multi');
+            if (!args.title)
+                errors.push('title is required');
+            if (!args.text)
+                errors.push('text is required');
             if (!args.btns || !Array.isArray(args.btns) || args.btns.length === 0)
-                errors.push('btns (non-empty array) is required for msgtype=actionCard_multi');
+                errors.push('btns (non-empty array) is required');
             if (args.btns && args.btns.length > 6)
                 errors.push('actionCard_multi supports up to 6 buttons, got ' + args.btns.length);
             break;
         case 'file':
-            if (!args.mediaId) errors.push('mediaId is required for msgtype=file');
-            if (!args.fileName) errors.push('fileName is required for msgtype=file');
-            if (!args.fileType) errors.push('fileType is required for msgtype=file');
+            if (!args.mediaId)
+                errors.push('mediaId is required');
+            if (!args.fileName)
+                errors.push('fileName is required');
+            if (!args.fileType)
+                errors.push('fileType is required');
             break;
         case 'audio':
-            if (!args.mediaId) errors.push('mediaId is required for msgtype=audio');
-            if (args.duration == null) errors.push('duration (ms) is required for msgtype=audio');
+            if (!args.mediaId)
+                errors.push('mediaId is required');
+            if (args.duration == null)
+                errors.push('duration (ms) is required');
             break;
         case 'video':
-            if (!args.videoMediaId) errors.push('videoMediaId is required for msgtype=video');
-            if (!args.picMediaId) errors.push('picMediaId is required for msgtype=video');
-            if (args.duration == null) errors.push('duration (seconds) is required for msgtype=video');
+            if (!args.videoMediaId)
+                errors.push('videoMediaId is required');
+            if (!args.picMediaId)
+                errors.push('picMediaId is required');
+            if (args.duration == null)
+                errors.push('duration (seconds) is required');
             break;
         default:
             errors.push(`Unknown msgtype: "${msgtype}". Must be one of: ${VALID_MSGTYPES.join(', ')}`);
     }
-    if (errors.length > 0) throw new Error('Validation errors:\n  - ' + errors.join('\n  - '));
+    if (errors.length > 0)
+        throw new Error('Validation errors:\n  - ' + errors.join('\n  - '));
 }
-
 // --- Config loading ---
-
 function loadConfigFile() {
     try {
         const configPath = path.join(os.homedir(), '.dingtalk-mcp-config.json');
@@ -275,32 +250,25 @@ function loadConfigFile() {
                 return data;
             }
         }
-    } catch (_) { /* ignore malformed config */ }
+    }
+    catch { /* ignore malformed config */ }
     return null;
 }
-
 // --- Server ---
-
 class DingTalkMCPServer {
     server;
     dingtalkClient = null;
-
     constructor() {
-        this.server = new Server(
-            { name: '钉钉机器人', version: '1.3.0' },
-            { capabilities: { tools: {} } }
-        );
+        this.server = new Server({ name: 'dingtalk', version: '1.3.0' }, { capabilities: { tools: {} } });
         this.setupHandlers();
         this.setupErrorHandling();
     }
-
     setupHandlers() {
         this.server.setRequestHandler(ListToolsRequestSchema, async () => {
             const tools = [
                 {
                     name: 'send_single_message',
-                    description:
-                        'Send a message to one or more DingTalk users (max 20). ' +
+                    description: 'Send a message to one or more DingTalk users (max 20). ' +
                         'Supports text, markdown, image, link, actionCard (single/multi button), file, audio, video. ' +
                         'Recipients can be specified via userIds (numeric) and/or userName (exact name search). ' +
                         'Both arrays are merged, deduplicated, and sent as a single batch call. ' +
@@ -309,16 +277,14 @@ class DingTalkMCPServer {
                 },
                 {
                     name: 'send_group_message',
-                    description:
-                        'Send a message to a DingTalk group chat. ' +
+                    description: 'Send a message to a DingTalk group chat. ' +
                         'Supports text, markdown, image, link, actionCard (single/multi button), file, audio, video. ' +
                         'Use upload_media first for image/file/audio/video to get a mediaId.',
                     inputSchema: buildGroupMessageSchema(),
                 },
                 {
                     name: 'upload_media',
-                    description:
-                        'Upload a local media file to DingTalk and get a mediaId. ' +
+                    description: 'Upload a local media file to DingTalk and get a mediaId. ' +
                         'Required before sending image, file, audio, or video messages. ' +
                         'Supported file types: image (jpg/png/gif/bmp, max 20MB), ' +
                         'voice (amr/mp3/wav, max 2MB), video (mp4, max 20MB), ' +
@@ -326,10 +292,7 @@ class DingTalkMCPServer {
                     inputSchema: {
                         type: 'object',
                         properties: {
-                            filePath: {
-                                type: 'string',
-                                description: 'Absolute path to the local file to upload',
-                            },
+                            filePath: { type: 'string', description: 'Absolute path to the local file to upload' },
                             mediaType: {
                                 type: 'string',
                                 enum: ['image', 'voice', 'video', 'file'],
@@ -342,108 +305,82 @@ class DingTalkMCPServer {
             ];
             return { tools };
         });
-
         this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
             if (!this.dingtalkClient) {
-                throw new Error(
-                    'DingTalk client not initialized. Please configure DINGTALK_APP_KEY and DINGTALK_APP_SECRET environment variables.'
-                );
+                throw new Error('DingTalk client not initialized. Please configure DINGTALK_APP_KEY and DINGTALK_APP_SECRET environment variables.');
             }
             const { name, arguments: args } = request.params;
+            const a = (args || {});
             try {
-                // --- upload_media ---
                 if (name === 'upload_media') {
-                    const { filePath, mediaType } = args;
+                    const { filePath, mediaType } = a;
                     const result = await this.dingtalkClient.uploadMedia(filePath, mediaType);
                     return {
-                        content: [
-                            {
+                        content: [{
                                 type: 'text',
                                 text: `File uploaded successfully.\nmediaId: ${result.mediaId}\ntype: ${result.type}\ncreatedAt: ${new Date(result.createdAt).toISOString()}\n\nUse this mediaId in send_single_message or send_group_message.`,
-                            },
-                        ],
+                            }],
                     };
                 }
-
-                // --- send_single_message ---
                 if (name === 'send_single_message') {
-                    const msgtype = args.msgtype || 'text';
-                    validateMsgParams(msgtype, args);
-
-                    const targetUserIds = await resolveRecipients(args, this.dingtalkClient);
+                    const msgtype = a.msgtype || 'text';
+                    validateMsgParams(msgtype, a);
+                    const targetUserIds = await resolveRecipients(a, this.dingtalkClient);
                     if (!targetUserIds || targetUserIds.length === 0) {
-                        throw new Error(
-                            'Must provide at least one of: userIds (array of numeric IDs) or userName (array of names). Max 20 total recipients.'
-                        );
+                        throw new Error('Must provide at least one of: userIds (array of numeric IDs) or userName (array of names). Max 20 total recipients.');
                     }
-
-                    const result = await this.dingtalkClient.sendSingleMessage(targetUserIds, msgtype, args);
+                    const result = await this.dingtalkClient.sendSingleMessage(targetUserIds, msgtype, a);
                     return {
-                        content: [
-                            {
+                        content: [{
                                 type: 'text',
                                 text: `Message (type: ${msgtype}) sent successfully to ${targetUserIds.length} user(s): ${targetUserIds.join(', ')}.\nResponse: ${JSON.stringify(result)}`,
-                            },
-                        ],
+                            }],
                     };
                 }
-
-                // --- send_group_message ---
                 if (name === 'send_group_message') {
-                    const { chatId } = args;
-                    const msgtype = args.msgtype || 'text';
-                    validateMsgParams(msgtype, args);
-
-                    const result = await this.dingtalkClient.sendGroupMessage(chatId, msgtype, args);
+                    const { chatId } = a;
+                    const msgtype = a.msgtype || 'text';
+                    validateMsgParams(msgtype, a);
+                    const result = await this.dingtalkClient.sendGroupMessage(chatId, msgtype, a);
                     return {
-                        content: [
-                            {
+                        content: [{
                                 type: 'text',
                                 text: `Message (type: ${msgtype}) sent successfully to group ${chatId}.\nResponse: ${JSON.stringify(result)}`,
-                            },
-                        ],
+                            }],
                     };
                 }
-
                 throw new Error(`Unknown tool: ${name}`);
-            } catch (error) {
+            }
+            catch (error) {
                 return {
-                    content: [
-                        {
+                    content: [{
                             type: 'text',
                             text: `Error: ${error instanceof Error ? error.message : String(error)}`,
-                        },
-                    ],
+                        }],
                     isError: true,
                 };
             }
         });
     }
-
     setupErrorHandling() {
-        this.server.onerror = (error) => {
-            console.error('[MCP Error]', error);
-        };
+        this.server.onerror = (error) => console.error('[MCP Error]', error);
         process.on('SIGINT', async () => {
             await this.server.close();
             process.exit(0);
         });
     }
-
     async run() {
         let appKey = process.env.DINGTALK_APP_KEY;
         let appSecret = process.env.DINGTALK_APP_SECRET;
-
         // 回退：尝试从配置文件 ~/.dingtalk-mcp-config.json 读取
         if (!appKey || !appSecret) {
             const config = loadConfigFile();
             if (config) {
                 appKey = config.appKey;
                 appSecret = config.appSecret;
-                console.error('[钉钉机器人] 已从 ~/.dingtalk-mcp-config.json 加载配置');
+                console.error('[dingtalk] Config loaded from ~/.dingtalk-mcp-config.json');
             }
         }
-
         if (!appKey || !appSecret) {
             console.error([
                 '',
@@ -479,14 +416,12 @@ class DingTalkMCPServer {
             ].join('\n'));
             process.exit(1);
         }
-
         this.dingtalkClient = new DingTalkClient({ appKey, appSecret });
         const transport = new StdioServerTransport();
         await this.server.connect(transport);
         console.error('钉钉机器人 MCP v1.3.0 running on stdio');
     }
 }
-
 const server = new DingTalkMCPServer();
 server.run().catch((error) => {
     console.error('Failed to start server:', error);

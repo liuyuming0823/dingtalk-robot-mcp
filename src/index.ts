@@ -271,7 +271,7 @@ class DingTalkMCPServer {
 
   constructor() {
     this.server = new Server(
-      { name: '钉钉机器人', version: '1.3.0' },
+{ name: 'dingtalk', version: '1.3.0' },
       { capabilities: { tools: {} } }
     );
     this.setupHandlers();
@@ -411,7 +411,7 @@ class DingTalkMCPServer {
       if (config) {
         appKey = config.appKey;
         appSecret = config.appSecret;
-        console.error('[钉钉机器人] 已从 ~/.dingtalk-mcp-config.json 加载配置');
+        console.error('[dingtalk] Config loaded from ~/.dingtalk-mcp-config.json');
       }
     }
 
