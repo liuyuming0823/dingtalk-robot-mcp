@@ -32,7 +32,7 @@ async function main() {
 
   const mcpConfig = {
     mcpServers: {
-      dingtalk: {
+      '钉钉机器人': {
         command: 'node',
         args: [path.join(__dirname, '..', 'dist', 'index.js')],
         env: {
@@ -46,6 +46,15 @@ async function main() {
   const configPath = path.join(process.cwd(), 'dingtalk-mcp-config.json');
   fs.writeFileSync(configPath, JSON.stringify(mcpConfig, null, 2));
   console.log(`\n✅ 配置文件已保存到: ${configPath}`);
+
+  // 同时保存到 ~/.dingtalk-mcp-config.json 供主程序自动加载
+  const homeDir = process.platform === 'win32' ? process.env.USERPROFILE : process.env.HOME;
+  if (homeDir) {
+    const userConfig = { appKey: answers.appKey, appSecret: answers.appSecret };
+    fs.writeFileSync(path.join(homeDir, '.dingtalk-mcp-config.json'), JSON.stringify(userConfig, null, 2));
+    console.log(`✅ 凭据已保存到: ${path.join(homeDir, '.dingtalk-mcp-config.json')}`);
+  }
+
   console.log('\n配置内容:');
   console.log(JSON.stringify(mcpConfig, null, 2));
 
@@ -62,7 +71,7 @@ async function main() {
         workbuddyConfig = JSON.parse(fs.readFileSync(workbuddyConfigPath, 'utf-8'));
         if (!workbuddyConfig.mcpServers) workbuddyConfig.mcpServers = {};
       }
-      workbuddyConfig.mcpServers.dingtalk = mcpConfig.mcpServers.dingtalk;
+      workbuddyConfig.mcpServers['钉钉机器人'] = mcpConfig.mcpServers['钉钉机器人'];
       if (fs.existsSync(workbuddyConfigPath)) {
         fs.copyFileSync(workbuddyConfigPath, `${workbuddyConfigPath}.backup`);
         console.log(`\n📦 已备份现有配置到: ${workbuddyConfigPath}.backup`);

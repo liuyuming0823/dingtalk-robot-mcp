@@ -40,7 +40,7 @@ async function main() {
   // Create MCP config
   const mcpConfig: any = {
     mcpServers: {
-      dingtalk: {
+      '钉钉机器人': {
         command: 'node',
         args: [path.join(__dirname, '..', 'dist', 'index.js')],
         env: {
@@ -56,15 +56,22 @@ async function main() {
   fs.writeFileSync(configPath, JSON.stringify(mcpConfig, null, 2));
   
   console.log(`\n✅ 配置文件已保存到: ${configPath}`);
+
+  // Also save to ~/.dingtalk-mcp-config.json for main program auto-load
+  const homeDir = process.platform === 'win32' 
+    ? process.env.USERPROFILE 
+    : process.env.HOME;
+  if (homeDir) {
+    const userConfig = { appKey: answers.appKey, appSecret: answers.appSecret };
+    fs.writeFileSync(path.join(homeDir, '.dingtalk-mcp-config.json'), JSON.stringify(userConfig, null, 2));
+    console.log(`✅ 凭据已保存到: ${path.join(homeDir, '.dingtalk-mcp-config.json')}`);
+  }
+
   console.log('\n配置内容:');
   console.log(JSON.stringify(mcpConfig, null, 2));
 
   // Configure WorkBuddy if requested
   if (answers.configureWorkBuddy) {
-    const homeDir = process.platform === 'win32' 
-      ? process.env.USERPROFILE 
-      : process.env.HOME;
-    
     if (!homeDir) {
       console.error('\n❌ 无法获取用户主目录');
       return;
@@ -84,7 +91,7 @@ async function main() {
       }
 
       // Merge config
-      workbuddyConfig.mcpServers.dingtalk = mcpConfig.mcpServers.dingtalk;
+      workbuddyConfig.mcpServers['钉钉机器人'] = mcpConfig.mcpServers['钉钉机器人'];
 
       // Create backup
       if (fs.existsSync(workbuddyConfigPath)) {

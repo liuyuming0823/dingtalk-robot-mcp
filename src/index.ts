@@ -6,6 +6,9 @@ import {
   ListToolsRequestSchema,
   Tool,
 } from '@modelcontextprotocol/sdk/types.js';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
 import { DingTalkClient } from './dingtalk.js';
 
 const VALID_MSGTYPES = [
@@ -237,6 +240,22 @@ function validateMsgParams(msgtype: string, args: Record<string, any>): void {
   if (errors.length > 0) throw new Error('Validation errors:\n  - ' + errors.join('\n  - '));
 }
 
+// --- Config loading ---
+
+function loadConfigFile(): { appKey: string; appSecret: string } | null {
+  try {
+    const configPath = path.join(os.homedir(), '.dingtalk-mcp-config.json');
+    if (fs.existsSync(configPath)) {
+      const content = fs.readFileSync(configPath, 'utf-8');
+      const data = JSON.parse(content);
+      if (data.appKey && data.appSecret) {
+        return data;
+      }
+    }
+  } catch { /* ignore malformed config */ }
+  return null;
+}
+
 // --- Server ---
 
 class DingTalkMCPServer {
@@ -373,16 +392,59 @@ class DingTalkMCPServer {
   }
 
   async run(): Promise<void> {
-    const appKey = process.env.DINGTALK_APP_KEY;
-    const appSecret = process.env.DINGTALK_APP_SECRET;
+    let appKey = process.env.DINGTALK_APP_KEY;
+    let appSecret = process.env.DINGTALK_APP_SECRET;
+
+    // 回退：尝试从配置文件 ~/.dingtalk-mcp-config.json 读取
     if (!appKey || !appSecret) {
-      console.error('Error: DINGTALK_APP_KEY and DINGTALK_APP_SECRET environment variables are required');
+      const config = loadConfigFile();
+      if (config) {
+        appKey = config.appKey;
+        appSecret = config.appSecret;
+        console.error('[钉钉机器人] 已从 ~/.dingtalk-mcp-config.json 加载配置');
+      }
+    }
+
+    if (!appKey || !appSecret) {
+      console.error([
+        '',
+        '╔══════════════════════════════════════════════╗',
+        '║     钉钉机器人 MCP — 缺少 AppKey/AppSecret   ║',
+        '╠══════════════════════════════════════════════╣',
+        '║                                              ║',
+        '║  请选择以下任一方式完成配置：                 ║',
+        '║                                              ║',
+        '║  方式一：运行配置向导（推荐）                 ║',
+        '║    cd 项目目录                                ║',
+        '║    node dist/config-setup.js                  ║',
+        '║                                              ║',
+        '║  方式二：手动编辑 WorkBuddy 配置               ║',
+        '║    打开 ~/.workbuddy/mcp.json                 ║',
+        '║    找到 "钉钉机器人" 节点，添加 env：          ║',
+        '║    "env": {                                   ║',
+        '║      "DINGTALK_APP_KEY": "你的AppKey",        ║',
+        '║      "DINGTALK_APP_SECRET": "你的AppSecret"   ║',
+        '║    }                                         ║',
+        '║                                              ║',
+        '║  方式三：设置系统环境变量                     ║',
+        '║    export DINGTALK_APP_KEY=你的AppKey         ║',
+        '║    export DINGTALK_APP_SECRET=你的AppSecret   ║',
+        '║                                              ║',
+        '║  获取 AppKey/AppSecret：                      ║',
+        '║    钉钉开放平台 → 应用开发 → 企业内部应用     ║',
+        '║    → 凭证与基础信息                            ║',
+        '║                                              ║',
+        '║  配置完成后，重启 WorkBuddy 即可使用。         ║',
+        '╚══════════════════════════════════════════════╝',
+        '',
+      ].join('\n'));
       process.exit(1);
     }
+
     this.dingtalkClient = new DingTalkClient({ appKey, appSecret });
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
-    console.error('DingTalk MCP server v1.2.0 running on stdio');
+    console.error('钉钉机器人 MCP v1.2.2 running on stdio');
   }
 }
 

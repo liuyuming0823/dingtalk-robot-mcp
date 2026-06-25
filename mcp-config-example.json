@@ -1,13 +1,14 @@
 {
+  "_comment": "将此配置合并到 ~/.workbuddy/mcp.json 的 mcpServers 中，然后修改 appKey/appSecret 和路径",
   "mcpServers": {
-    "dingtalk": {
+    "钉钉机器人": {
       "command": "node",
       "args": [
         "/path/to/dingtalk-mcp-server/dist/index.js"
       ],
       "env": {
-        "DINGTALK_APP_KEY": "你的AppKey",
-        "DINGTALK_APP_SECRET": "你的AppSecret"
+        "DINGTALK_APP_KEY": "替换为你的AppKey",
+        "DINGTALK_APP_SECRET": "替换为你的AppSecret"
       }
     }
   }
