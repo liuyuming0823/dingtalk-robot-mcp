@@ -17,19 +17,20 @@ const VALID_MSGTYPES = [
 
 function recipientsSchema() {
     return {
-        userId: {
-            type: 'string',
-            description: 'Single DingTalk user ID to send message to',
-        },
         userIds: {
             type: 'array',
             items: { type: 'string' },
-            description: 'Array of DingTalk user IDs (max 20) for batch sending',
+            description:
+                'Array of DingTalk numeric user IDs. Max 20 total recipients across userIds + userName. ' +
+                'For a single recipient, pass a 1-element array (e.g. ["011950195121139389"]).',
         },
         userName: {
-            type: 'string',
+            type: 'array',
+            items: { type: 'string' },
             description:
-                'Exact user name to search and send to. If multiple users share the same name, sending will fail with a list of duplicate user IDs.',
+                'Array of exact user names to search and resolve to user IDs. ' +
+                'If any name matches multiple users, the entire batch will fail with a list of duplicates. ' +
+                'Max 20 total recipients across userIds + userName.',
         },
     };
 }
@@ -163,52 +164,51 @@ function buildGroupMessageSchema() {
 
 // --- Helpers ---
 
-/**
- * Check if a string appears to be a person's name (contains Chinese chars, not a numeric user ID).
- */
-function looksLikeName(str) {
-    return /[\u4e00-\u9fff]/.test(str);
-}
-
 async function resolveRecipients(args, client) {
-    if (args.userId) {
-        // If userId looks like a Chinese name, treat it as userName and search
-        if (looksLikeName(args.userId)) {
-            const foundUserIds = await client.searchUserByName(args.userId);
+    const resolved = new Set();
+
+    // Process userIds — numeric IDs, pass through directly
+    if (args.userIds?.length) {
+        for (const id of args.userIds) {
+            if (!id || typeof id !== 'string') continue;
+            resolved.add(id);
+        }
+    }
+
+    // Process userName — search each name via DingTalk org API
+    if (args.userName?.length) {
+        // Check for duplicate entries within the userName array itself
+        const nameSet = new Set(args.userName);
+        if (nameSet.size < args.userName.length) {
+            throw new Error('Duplicate names found in userName array. Please remove duplicates before sending.');
+        }
+
+        for (const name of args.userName) {
+            const foundUserIds = await client.searchUserByName(name);
             if (foundUserIds.length === 0) {
                 throw new Error(
-                    `User "${args.userId}" not found in the organization. Please check the name and try again.`
+                    `User "${name}" not found in the organization. Please check the name and try again.`
                 );
             }
             if (foundUserIds.length > 1) {
                 throw new Error(
-                    `Multiple users found with name "${args.userId}" (${foundUserIds.length} duplicates). Found userIds: ${foundUserIds.join(', ')}. Please use a numeric userId to specify the exact recipient.`
+                    `Multiple users found with name "${name}" (${foundUserIds.length} duplicates). ` +
+                    `Found userIds: ${foundUserIds.join(', ')}. ` +
+                    `Please replace "${name}" with the specific numeric userId in the userIds array.`
                 );
             }
-            return [foundUserIds[0]];
+            resolved.add(foundUserIds[0]);
         }
-        return [args.userId];
     }
-    if (args.userIds?.length) {
-        if (args.userIds.length > 20)
-            throw new Error(`Maximum 20 users allowed per batch, got ${args.userIds.length}.`);
-        return args.userIds;
+
+    if (resolved.size === 0) return null;
+    if (resolved.size > 20) {
+        throw new Error(
+            `Maximum 20 users allowed per batch, got ${resolved.size} (combined from userIds and userName).`
+        );
     }
-    if (args.userName) {
-        const foundUserIds = await client.searchUserByName(args.userName);
-        if (foundUserIds.length === 0) {
-            throw new Error(
-                `User "${args.userName}" not found in the organization. Please check the name and try again.`
-            );
-        }
-        if (foundUserIds.length > 1) {
-            throw new Error(
-                `Multiple users found with name "${args.userName}" (${foundUserIds.length} duplicates). Found userIds: ${foundUserIds.join(', ')}. Please use userId to specify the exact recipient.`
-            );
-        }
-        return [foundUserIds[0]];
-    }
-    return null;
+
+    return [...resolved];
 }
 
 function validateMsgParams(msgtype, args) {
@@ -287,7 +287,7 @@ class DingTalkMCPServer {
 
     constructor() {
         this.server = new Server(
-            { name: '钉钉机器人', version: '1.2.1' },
+            { name: '钉钉机器人', version: '1.3.0' },
             { capabilities: { tools: {} } }
         );
         this.setupHandlers();
@@ -300,9 +300,10 @@ class DingTalkMCPServer {
                 {
                     name: 'send_single_message',
                     description:
-                        'Send a message to one or more DingTalk users (up to 20). ' +
+                        'Send a message to one or more DingTalk users (max 20). ' +
                         'Supports text, markdown, image, link, actionCard (single/multi button), file, audio, video. ' +
-                        'Recipients can be specified by userId, userIds[], or userName (exact match). ' +
+                        'Recipients can be specified via userIds (numeric) and/or userName (exact name search). ' +
+                        'Both arrays are merged, deduplicated, and sent as a single batch call. ' +
                         'Use upload_media first for image/file/audio/video to get a mediaId.',
                     inputSchema: buildSingleMessageSchema(),
                 },
@@ -372,7 +373,7 @@ class DingTalkMCPServer {
                     const targetUserIds = await resolveRecipients(args, this.dingtalkClient);
                     if (!targetUserIds || targetUserIds.length === 0) {
                         throw new Error(
-                            'Must provide one of: userId, userIds (max 20), or userName (exact name match).'
+                            'Must provide at least one of: userIds (array of numeric IDs) or userName (array of names). Max 20 total recipients.'
                         );
                     }
 
@@ -482,7 +483,7 @@ class DingTalkMCPServer {
         this.dingtalkClient = new DingTalkClient({ appKey, appSecret });
         const transport = new StdioServerTransport();
         await this.server.connect(transport);
-        console.error('钉钉机器人 MCP v1.2.2 running on stdio');
+        console.error('钉钉机器人 MCP v1.3.0 running on stdio');
     }
 }
 
